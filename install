@@ -4,14 +4,16 @@
 # https://lince.sh
 #
 # Usage:
-#   curl -sSL https://lince.sh/install | bash
-#   curl -sSL https://lince.sh/install | bash -s -- --skip-voxcode
+#   curl -sSL https://lince.sh/install | bash                      (interactive)
+#   curl -sSL https://lince.sh/install | bash -s -- --with-voxcode  (full, non-interactive)
+#   curl -sSL https://lince.sh/install | bash -s -- --skip-voxcode  (core only, non-interactive)
 #
 # This script:
-#   1. Detects your OS (Linux/macOS)
-#   2. Checks and helps install prerequisites
-#   3. Installs sandbox + dashboard (core)
-#   4. Optionally installs VoxCode (voice input)
+#   1. Asks: full solution (with VoxCode) or core only
+#   2. Detects your OS (Linux/macOS)
+#   3. Checks and helps install prerequisites
+#   4. Installs VoxCode first (if chosen, so dashboard config includes it)
+#   5. Installs sandbox + dashboard
 #
 
 set -e
@@ -27,9 +29,11 @@ NC='\033[0m'
 
 # Options
 SKIP_VOXCODE=false
+INSTALL_VOXCODE=false
 for arg in "$@"; do
   case $arg in
     --skip-voxcode) SKIP_VOXCODE=true ;;
+    --with-voxcode) INSTALL_VOXCODE=true ;;
   esac
 done
 
@@ -42,6 +46,22 @@ echo -e "${NC}"
 echo -e "  ${BOLD}Secure Multi-Agent Coding Workstation${NC}"
 echo -e "  https://lince.sh"
 echo ""
+
+# ── Installation mode ────────────────────────────────────────────────
+if [ "$SKIP_VOXCODE" = false ] && [ "$INSTALL_VOXCODE" = false ]; then
+  echo -e "${BOLD}What would you like to install?${NC}"
+  echo ""
+  echo "  1) ${GREEN}Full solution${NC}  — sandbox + dashboard + VoxCode (voice input)"
+  echo "  2) ${CYAN}Core only${NC}      — sandbox + dashboard"
+  echo ""
+  read -p "Choose [1/2] (default: 1): " -n 1 -r INSTALL_MODE
+  echo ""
+  echo ""
+  case "$INSTALL_MODE" in
+    2) SKIP_VOXCODE=true ;;
+    *) INSTALL_VOXCODE=true ;;
+  esac
+fi
 
 # ── OS Detection ─────────────────────────────────────────────────────
 OS_NAME="$(uname -s)"
@@ -171,10 +191,11 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   echo ""
 fi
 
-# ── Clone and install core ───────────────────────────────────────────
-echo -e "${BLUE}[2/4] Installing LINCE core (sandbox + dashboard)...${NC}"
-
+# ── Clone LINCE core ─────────────────────────────────────────────────
 INSTALL_DIR="$HOME/.local/share/lince"
+STEP=2
+
+echo -e "${BLUE}[$STEP/4] Cloning LINCE...${NC}"
 
 if [ -d "$INSTALL_DIR" ]; then
   echo "  Existing installation found at $INSTALL_DIR"
@@ -190,8 +211,41 @@ else
 fi
 echo ""
 
-# Install sandbox
-echo -e "  ${CYAN}Installing sandbox...${NC}"
+# ── VoxCode (installed BEFORE dashboard so config includes it) ───────
+VOXCODE_INSTALLED=false
+
+if [ "$INSTALL_VOXCODE" = true ]; then
+  STEP=$((STEP + 1))
+  echo -e "${BLUE}[$STEP/4] Installing VoxCode (voice input)...${NC}"
+  echo "  Requires: microphone, ~1GB disk (Whisper model), GPU recommended."
+  echo ""
+
+  if ! check_cmd uv; then
+    echo -e "  ${YELLOW}uv not found. Installing...${NC}"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+
+  VOXCODE_DIR="$HOME/.local/share/voxcode"
+  if [ -d "$VOXCODE_DIR" ]; then
+    cd "$VOXCODE_DIR" && git pull --ff-only 2>/dev/null || true
+  else
+    git clone https://github.com/RisorseArtificiali/voxcode.git "$VOXCODE_DIR"
+  fi
+
+  cd "$VOXCODE_DIR"
+  if bash install.sh; then
+    echo -e "  ${GREEN}✓ VoxCode installed${NC}"
+    VOXCODE_INSTALLED=true
+  else
+    echo -e "  ${RED}✗ VoxCode installation failed${NC}"
+  fi
+  echo ""
+fi
+
+# ── Install sandbox ──────────────────────────────────────────────────
+STEP=$((STEP + 1))
+echo -e "${BLUE}[$STEP/4] Installing sandbox...${NC}"
 cd "$INSTALL_DIR/sandbox"
 if bash install.sh; then
   echo -e "  ${GREEN}✓ Sandbox installed${NC}"
@@ -200,64 +254,49 @@ else
 fi
 echo ""
 
-# Install dashboard
-echo -e "  ${CYAN}Installing dashboard...${NC}"
+# ── Install dashboard (after VoxCode so it detects and includes it) ──
+STEP=$((STEP + 1))
+echo -e "${BLUE}[$STEP/4] Installing dashboard...${NC}"
 cd "$INSTALL_DIR/lince-dashboard"
 if bash install.sh; then
   echo -e "  ${GREEN}✓ Dashboard installed${NC}"
+  if [ "$VOXCODE_INSTALLED" = true ]; then
+    echo -e "  ${GREEN}  (VoxCode layout enabled)${NC}"
+  fi
 else
   echo -e "  ${RED}✗ Dashboard installation failed${NC}"
 fi
 echo ""
 
-# ── Optional: VoxCode ────────────────────────────────────────────────
-echo -e "${BLUE}[3/4] Voice input (VoxCode)...${NC}"
-
-if [ "$SKIP_VOXCODE" = true ]; then
-  echo "  Skipped (--skip-voxcode flag)."
-else
-  echo "  VoxCode adds voice control — speak to your agents."
-  echo "  Requires: microphone, ~1GB disk (Whisper model), GPU recommended."
-  echo ""
-  if confirm "  Install VoxCode?"; then
-    if ! check_cmd uv; then
-      echo -e "  ${YELLOW}uv not found. Installing...${NC}"
-      curl -LsSf https://astral.sh/uv/install.sh | sh
-      export PATH="$HOME/.local/bin:$PATH"
-    fi
-
-    VOXCODE_DIR="$HOME/.local/share/voxcode"
-    if [ -d "$VOXCODE_DIR" ]; then
-      cd "$VOXCODE_DIR" && git pull --ff-only 2>/dev/null || true
-    else
-      git clone https://github.com/RisorseArtificiali/voxcode.git "$VOXCODE_DIR"
-    fi
-
-    cd "$VOXCODE_DIR"
-    if bash install.sh; then
-      echo -e "  ${GREEN}✓ VoxCode installed${NC}"
-      echo ""
-      echo "  Re-run the dashboard installer to enable the VoxCode layout:"
-      echo "    cd $INSTALL_DIR/lince-dashboard && bash install.sh"
-    else
-      echo -e "  ${RED}✗ VoxCode installation failed${NC}"
-    fi
-  else
-    echo "  Skipped. Install later: https://github.com/RisorseArtificiali/voxcode"
-  fi
-fi
-echo ""
-
 # ── Summary ──────────────────────────────────────────────────────────
-echo -e "${BLUE}[4/4] Done!${NC}"
+echo -e "${GREEN}${BOLD}LINCE is installed!${NC}"
 echo ""
-echo -e "${GREEN}${BOLD}LINCE is installed.${NC}"
+
+# Detect user's shell for reload instructions
+USER_SHELL="$(basename "${SHELL:-bash}")"
+case "$USER_SHELL" in
+  zsh)  SHELL_RC="~/.zshrc" ;;
+  fish) SHELL_RC="~/.config/fish/config.fish" ;;
+  *)    SHELL_RC="~/.bashrc" ;;
+esac
+
+echo -e "  ${YELLOW}${BOLD}⚠  Reload your shell to activate the 'zd' alias:${NC}"
 echo ""
-echo "  Reload your shell and launch the dashboard:"
+echo -e "    ${CYAN}source $SHELL_RC${NC}    ${BOLD}or${NC}    open a new terminal"
 echo ""
-echo -e "    ${CYAN}source ~/.bashrc${NC}"
+echo "  Then launch the dashboard:"
+echo ""
 echo -e "    ${CYAN}zd${NC}"
 echo ""
+
+if [ "$VOXCODE_INSTALLED" = true ]; then
+  echo -e "  ${GREEN}✓${NC} VoxCode is active — voice input will be available in the dashboard."
+elif [ "$SKIP_VOXCODE" = true ]; then
+  echo -e "  Voice input skipped. Install later:"
+  echo -e "    ${CYAN}curl -sSL https://lince.sh/install | bash -s -- --with-voxcode${NC}"
+  echo ""
+fi
+
 echo "  Dashboard keybindings:"
 echo "    n       Spawn new agent"
 echo "    f       Focus (show) agent pane"
