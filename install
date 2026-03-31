@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 #
-# LINCE Installer
+# LINCE Installer — thin wrapper
 # https://lince.sh
 #
 # Usage:
-#   curl -sSL https://lince.sh/install | bash                      (interactive)
-#   curl -sSL https://lince.sh/install | bash -s -- --with-voxcode  (full, non-interactive)
-#   curl -sSL https://lince.sh/install | bash -s -- --skip-voxcode  (core only, non-interactive)
+#   curl -sSL https://lince.sh/install | bash                    (interactive)
+#   curl -sSL https://lince.sh/install | bash -s -- --defaults   (non-interactive, sane defaults)
 #
 # This script:
-#   1. Asks: full solution (with VoxCode) or core only
-#   2. Detects your OS (Linux/macOS)
-#   3. Checks and helps install prerequisites
-#   4. Installs VoxCode first (if chosen, so dashboard config includes it)
-#   5. Installs sandbox + dashboard
+#   1. Prints banner and detects OS
+#   2. Checks basic prerequisites (python3, git, cc)
+#   3. Clones the lince repo to ~/.local/share/lince
+#   4. Delegates everything else to quickstart.sh
 #
 
 set -e
@@ -27,16 +25,6 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Options
-SKIP_VOXCODE=false
-INSTALL_VOXCODE=false
-for arg in "$@"; do
-  case $arg in
-    --skip-voxcode) SKIP_VOXCODE=true ;;
-    --with-voxcode) INSTALL_VOXCODE=true ;;
-  esac
-done
-
 echo ""
 echo -e "${CYAN}${BOLD}"
 echo "  ╦  ╦╔╗╔╔═╗╔═╗"
@@ -47,22 +35,6 @@ echo -e "  ${BOLD}Secure Multi-Agent Coding Workstation${NC}"
 echo -e "  https://lince.sh"
 echo ""
 
-# ── Installation mode ────────────────────────────────────────────────
-if [ "$SKIP_VOXCODE" = false ] && [ "$INSTALL_VOXCODE" = false ]; then
-  echo -e "${BOLD}What would you like to install?${NC}"
-  echo ""
-  echo "  1) ${GREEN}Full solution${NC}  — sandbox + dashboard + VoxCode (voice input)"
-  echo "  2) ${CYAN}Core only${NC}      — sandbox + dashboard"
-  echo ""
-  read -p "Choose [1/2] (default: 1): " -n 1 -r INSTALL_MODE
-  echo ""
-  echo ""
-  case "$INSTALL_MODE" in
-    2) SKIP_VOXCODE=true ;;
-    *) INSTALL_VOXCODE=true ;;
-  esac
-fi
-
 # ── OS Detection ─────────────────────────────────────────────────────
 OS_NAME="$(uname -s)"
 ARCH="$(uname -m)"
@@ -70,13 +42,11 @@ ARCH="$(uname -m)"
 case "$OS_NAME" in
   Linux)
     echo -e "${GREEN}[*] Platform: Linux ($ARCH)${NC}"
-    SANDBOX_BACKEND="bubblewrap"
     ;;
   Darwin)
     echo -e "${YELLOW}[*] Platform: macOS ($ARCH) — experimental support${NC}"
     echo "    Sandbox via nono (Seatbelt). Some features may need validation."
     echo "    See: https://github.com/RisorseArtificiali/lince/issues/19"
-    SANDBOX_BACKEND="nono"
     ;;
   *)
     echo -e "${RED}[!] Unsupported OS: $OS_NAME${NC}"
@@ -88,18 +58,12 @@ esac
 echo ""
 
 # ── Helper functions ─────────────────────────────────────────────────
-confirm() {
-  read -p "$1 (y/n): " -n 1 -r
-  echo
-  [[ $REPLY =~ ^[Yy]$ ]]
-}
-
 check_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
 # ── Prerequisites ────────────────────────────────────────────────────
-echo -e "${BLUE}[1/4] Checking prerequisites...${NC}"
+echo -e "${BLUE}[1/2] Checking prerequisites...${NC}"
 
 MISSING=()
 
@@ -124,56 +88,21 @@ else
   MISSING+=("git")
 fi
 
-# Zellij
-if check_cmd zellij; then
-  echo -e "  ${GREEN}✓${NC} zellij $(zellij --version 2>/dev/null | awk '{print $2}')"
+# C linker (required by Rust/cargo to compile native code)
+if check_cmd cc; then
+  echo -e "  ${GREEN}✓${NC} cc (C linker)"
 else
-  MISSING+=("zellij (>= 0.40)")
-  echo -e "  ${YELLOW}✗${NC} zellij not found"
-  echo ""
-  echo "    Install Zellij:"
+  MISSING+=("C compiler/linker (cc)")
+  echo -e "  ${YELLOW}✗${NC} cc not found"
   if [ "$OS_NAME" = "Darwin" ]; then
-    echo "      brew install zellij"
+    echo "    Install: xcode-select --install"
   else
+    echo "    Install:"
     echo "      # Fedora/RHEL:"
-    echo "      sudo dnf install zellij"
+    echo "      sudo dnf install gcc"
     echo "      # Ubuntu/Debian:"
-    echo "      sudo apt install zellij"
-    echo "      # Or via cargo:"
-    echo "      cargo install --locked zellij"
-    echo "      # Or prebuilt binary:"
-    echo "      curl -L https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz | tar xz && sudo mv zellij /usr/local/bin/"
+    echo "      sudo apt install build-essential"
   fi
-  echo ""
-fi
-
-# Sandbox backend
-if [ "$SANDBOX_BACKEND" = "bubblewrap" ]; then
-  if check_cmd bwrap; then
-    echo -e "  ${GREEN}✓${NC} bubblewrap"
-  else
-    MISSING+=("bubblewrap")
-    echo -e "  ${YELLOW}✗${NC} bubblewrap not found"
-    echo "    Install: sudo dnf install bubblewrap  (or: sudo apt install bubblewrap)"
-  fi
-elif [ "$SANDBOX_BACKEND" = "nono" ]; then
-  if check_cmd nono; then
-    echo -e "  ${GREEN}✓${NC} nono"
-  else
-    MISSING+=("nono")
-    echo -e "  ${YELLOW}✗${NC} nono not found"
-    echo "    Install: brew install nono"
-    echo "    See: https://github.com/nicholasgasior/nono"
-  fi
-fi
-
-# Rust (for dashboard WASM build)
-if check_cmd rustc; then
-  echo -e "  ${GREEN}✓${NC} rustc $(rustc --version 2>/dev/null | awk '{print $2}')"
-else
-  MISSING+=("Rust toolchain (for building dashboard plugin)")
-  echo -e "  ${YELLOW}✗${NC} rustc not found"
-  echo "    Install: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
 fi
 
 echo ""
@@ -184,126 +113,33 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     echo "  - $m"
   done
   echo ""
-  if ! confirm "Continue anyway? (install will fail if prerequisites are missing)"; then
-    echo "Install the missing prerequisites and re-run this script."
-    exit 1
-  fi
-  echo ""
+  echo "Install the missing prerequisites and re-run this script."
+  exit 1
 fi
 
-# ── Clone LINCE core ─────────────────────────────────────────────────
+# ── Clone / update LINCE ─────────────────────────────────────────────
 INSTALL_DIR="$HOME/.local/share/lince"
-STEP=2
 
-echo -e "${BLUE}[$STEP/4] Cloning LINCE...${NC}"
+echo -e "${BLUE}[2/2] Fetching LINCE...${NC}"
 
-if [ -d "$INSTALL_DIR" ]; then
-  echo "  Existing installation found at $INSTALL_DIR"
-  if confirm "  Update existing installation?"; then
-    cd "$INSTALL_DIR"
-    git pull --ff-only 2>/dev/null || true
-  else
-    echo "  Skipping clone."
-  fi
+if [ -d "$INSTALL_DIR/.git" ]; then
+  echo "  Updating existing installation at $INSTALL_DIR..."
+  git -C "$INSTALL_DIR" pull --ff-only 2>/dev/null || true
 else
+  if [ -d "$INSTALL_DIR" ]; then
+    echo -e "  ${YELLOW}Directory exists but is not a git repo — removing and re-cloning${NC}"
+    rm -rf "$INSTALL_DIR"
+  fi
   echo "  Cloning to $INSTALL_DIR..."
   git clone https://github.com/RisorseArtificiali/lince.git "$INSTALL_DIR"
 fi
 echo ""
 
-# ── VoxCode (installed BEFORE dashboard so config includes it) ───────
-VOXCODE_INSTALLED=false
+# ── Delegate to quickstart.sh ────────────────────────────────────────
+# When piped through curl | bash, stdin is the script itself, not the
+# terminal. Reattach stdin to /dev/tty so quickstart.sh can prompt.
+exec < /dev/tty 2>/dev/null || true
 
-if [ "$INSTALL_VOXCODE" = true ]; then
-  STEP=$((STEP + 1))
-  echo -e "${BLUE}[$STEP/4] Installing VoxCode (voice input)...${NC}"
-  echo "  Requires: microphone, ~1GB disk (Whisper model), GPU recommended."
-  echo ""
-
-  if ! check_cmd uv; then
-    echo -e "  ${YELLOW}uv not found. Installing...${NC}"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
-
-  VOXCODE_DIR="$HOME/.local/share/voxcode"
-  if [ -d "$VOXCODE_DIR" ]; then
-    cd "$VOXCODE_DIR" && git pull --ff-only 2>/dev/null || true
-  else
-    git clone https://github.com/RisorseArtificiali/voxcode.git "$VOXCODE_DIR"
-  fi
-
-  cd "$VOXCODE_DIR"
-  if bash install.sh; then
-    echo -e "  ${GREEN}✓ VoxCode installed${NC}"
-    VOXCODE_INSTALLED=true
-  else
-    echo -e "  ${RED}✗ VoxCode installation failed${NC}"
-  fi
-  echo ""
-fi
-
-# ── Install sandbox ──────────────────────────────────────────────────
-STEP=$((STEP + 1))
-echo -e "${BLUE}[$STEP/4] Installing sandbox...${NC}"
-cd "$INSTALL_DIR/sandbox"
-if bash install.sh; then
-  echo -e "  ${GREEN}✓ Sandbox installed${NC}"
-else
-  echo -e "  ${RED}✗ Sandbox installation failed${NC}"
-fi
+echo -e "${CYAN}Handing off to quickstart.sh...${NC}"
 echo ""
-
-# ── Install dashboard (after VoxCode so it detects and includes it) ──
-STEP=$((STEP + 1))
-echo -e "${BLUE}[$STEP/4] Installing dashboard...${NC}"
-cd "$INSTALL_DIR/lince-dashboard"
-if bash install.sh; then
-  echo -e "  ${GREEN}✓ Dashboard installed${NC}"
-  if [ "$VOXCODE_INSTALLED" = true ]; then
-    echo -e "  ${GREEN}  (VoxCode layout enabled)${NC}"
-  fi
-else
-  echo -e "  ${RED}✗ Dashboard installation failed${NC}"
-fi
-echo ""
-
-# ── Summary ──────────────────────────────────────────────────────────
-echo -e "${GREEN}${BOLD}LINCE is installed!${NC}"
-echo ""
-
-# Detect user's shell for reload instructions
-USER_SHELL="$(basename "${SHELL:-bash}")"
-case "$USER_SHELL" in
-  zsh)  SHELL_RC="~/.zshrc" ;;
-  fish) SHELL_RC="~/.config/fish/config.fish" ;;
-  *)    SHELL_RC="~/.bashrc" ;;
-esac
-
-echo -e "  ${YELLOW}${BOLD}⚠  Reload your shell to activate the 'zd' alias:${NC}"
-echo ""
-echo -e "    ${CYAN}source $SHELL_RC${NC}    ${BOLD}or${NC}    open a new terminal"
-echo ""
-echo "  Then launch the dashboard:"
-echo ""
-echo -e "    ${CYAN}zd${NC}"
-echo ""
-
-if [ "$VOXCODE_INSTALLED" = true ]; then
-  echo -e "  ${GREEN}✓${NC} VoxCode is active — voice input will be available in the dashboard."
-elif [ "$SKIP_VOXCODE" = true ]; then
-  echo -e "  Voice input skipped. Install later:"
-  echo -e "    ${CYAN}curl -sSL https://lince.sh/install | bash -s -- --with-voxcode${NC}"
-  echo ""
-fi
-
-echo "  Dashboard keybindings:"
-echo "    n       Spawn new agent"
-echo "    f       Focus (show) agent pane"
-echo "    h       Hide agent pane"
-echo "    ?       Help overlay"
-echo "    Q       Save & quit"
-echo ""
-echo -e "  Docs: ${CYAN}https://github.com/RisorseArtificiali/lince${NC}"
-echo -e "  Site: ${CYAN}https://lince.sh${NC}"
-echo ""
+exec bash "$INSTALL_DIR/quickstart.sh" "$@"
