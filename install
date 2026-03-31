@@ -136,10 +136,21 @@ fi
 echo ""
 
 # ── Delegate to quickstart.sh ────────────────────────────────────────
+QUICKSTART="$INSTALL_DIR/quickstart.sh"
+
+if [ ! -f "$QUICKSTART" ]; then
+  echo -e "${RED}[!] quickstart.sh not found at $QUICKSTART${NC}"
+  echo "    The lince repo may be outdated. Try removing $INSTALL_DIR and re-running."
+  exit 1
+fi
+
 # When piped through curl | bash, stdin is the script itself, not the
 # terminal. Reattach stdin to /dev/tty so quickstart.sh can prompt.
-exec < /dev/tty 2>/dev/null || true
+# Use a subshell test to avoid set -e killing us if /dev/tty is unavailable.
+if [ -e /dev/tty ]; then
+  exec < /dev/tty
+fi
 
 echo -e "${CYAN}Handing off to quickstart.sh...${NC}"
 echo ""
-exec bash "$INSTALL_DIR/quickstart.sh" "$@"
+exec bash "$QUICKSTART" "$@"
